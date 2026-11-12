@@ -38,6 +38,7 @@ targets:
       - Shared/UI
     dependencies:
       - package: DataTrackerCore
+      - sdk: AppIntents.framework
       - target: DataTrackerTunnel
       - target: DataTrackerWidget
     info:
@@ -50,6 +51,7 @@ targets:
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIRequiresFullScreen: true
         UIBackgroundModes: [fetch]
         BGTaskSchedulerPermittedIdentifiers: [$(PRODUCT_BUNDLE_IDENTIFIER).refresh]
         AppGroupIdentifier: $(APP_GROUP_ID)

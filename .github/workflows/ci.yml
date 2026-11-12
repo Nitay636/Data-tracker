@@ -36,6 +36,9 @@ jobs:
             CODE_SIGNING_ALLOWED=NO > build.log 2>&1 \
             || { grep -E "error:" build.log | sort -u | head -150; tail -30 build.log; exit 1; }
           grep -E "warning:" build.log | grep -v "/SourcePackages/" | sort -u | head -50 || true
+          if grep -q "No AppIntents.framework dependency found" build.log; then
+            echo "App Shortcuts metadata was not extracted"; exit 1
+          fi
           tail -3 build.log
       - name: Upload build log
         if: failure()
