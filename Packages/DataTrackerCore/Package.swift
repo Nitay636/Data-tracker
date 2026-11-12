@@ -1,4 +1,4 @@
-// swift-tools-version: 5.10
+// swift-tools-version: 6.0
 import PackageDescription
 
 // Platform-independent logic shared by the app, the packet tunnel extension and the widget.
@@ -19,5 +19,5 @@ let package = Package(
             dependencies: ["DataTrackerCore"]
         )
     ],
-    swiftLanguageVersions: [.v5]
+    swiftLanguageModes: [.v5]
 )

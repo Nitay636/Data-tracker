@@ -187,11 +187,11 @@ private final class SocksSession {
             let finish: () -> Void = { [weak self] in self?.close() }
 
             switch Socks5.Command(rawValue: request.command) {
-            case .connect:
+            case .some(.connect):
                 let tcp = TCPRelay(client: client, target: request.address, queue: queue, report: report, onFinish: finish)
                 relay = tcp
                 tcp.start(leftover: leftover)
-            case .udpInTCP:
+            case .some(.udpInTCP):
                 send(Socks5.reply(.succeeded))
                 let udp = UDPRelay(client: client, queue: queue, report: report, onFinish: finish)
                 relay = udp
