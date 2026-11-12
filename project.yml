@@ -1,0 +1,130 @@
+# Generate the Xcode project with:  brew install xcodegen && xcodegen generate
+# Set your team and bundle prefix in Config/Signing.xcconfig first.
+name: DataTracker
+
+options:
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+configFiles:
+  Debug: Config/Signing.xcconfig
+  Release: Config/Signing.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+packages:
+  DataTrackerCore:
+    path: Packages/DataTrackerCore
+  Tun2SocksKit:
+    url: https://github.com/EbrahimTahernejad/Tun2SocksKit
+    exactVersion: 5.16.0
+
+targets:
+  DataTracker:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - Shared/Common
+      - Shared/UI
+    dependencies:
+      - package: DataTrackerCore
+      - target: DataTrackerTunnel
+      - target: DataTrackerWidget
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: DataTracker
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIBackgroundModes: [fetch]
+        BGTaskSchedulerPermittedIdentifiers: [$(PRODUCT_BUNDLE_IDENTIFIER).refresh]
+        AppGroupIdentifier: $(APP_GROUP_ID)
+        ITSAppUsesNonExemptEncryption: false
+    entitlements:
+      path: App/DataTracker.entitlements
+      properties:
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+        com.apple.security.application-groups: [$(APP_GROUP_ID)]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).datatracker
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+  DataTrackerTunnel:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Tunnel
+      - Shared/Common
+    dependencies:
+      - package: DataTrackerCore
+      - package: Tun2SocksKit
+        product: Tun2SocksKit
+    info:
+      path: Tunnel/Info.plist
+      properties:
+        CFBundleDisplayName: DataTracker Tunnel
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        AppGroupIdentifier: $(APP_GROUP_ID)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
+    entitlements:
+      path: Tunnel/DataTrackerTunnel.entitlements
+      properties:
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+        com.apple.security.application-groups: [$(APP_GROUP_ID)]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).datatracker.tunnel
+
+  DataTrackerWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Widget
+      - Shared/Common
+      - Shared/UI
+    dependencies:
+      - package: DataTrackerCore
+    info:
+      path: Widget/Info.plist
+      properties:
+        CFBundleDisplayName: DataTracker Widget
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        AppGroupIdentifier: $(APP_GROUP_ID)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Widget/DataTrackerWidget.entitlements
+      properties:
+        com.apple.security.application-groups: [$(APP_GROUP_ID)]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).datatracker.widget
+
+schemes:
+  DataTracker:
+    build:
+      targets:
+        DataTracker: all
+    run:
+      config: Debug
+    archive:
+      config: Release
