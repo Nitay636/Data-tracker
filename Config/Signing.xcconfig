@@ -1,0 +1,11 @@
+// Edit these before generating the project.
+//
+// DEVELOPMENT_TEAM: your 10-character Team ID (Xcode > Settings > Accounts, or developer.apple.com > Membership).
+// BUNDLE_ID_PREFIX: a reverse-DNS prefix you own, e.g. com.yourname. Bundle IDs become
+//   <prefix>.datatracker, <prefix>.datatracker.tunnel and <prefix>.datatracker.widget.
+
+DEVELOPMENT_TEAM =
+BUNDLE_ID_PREFIX = com.example
+
+// Shared container used by the app, the VPN extension and the widget.
+APP_GROUP_ID = group.$(BUNDLE_ID_PREFIX).datatracker

@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  core-tests:
+    name: Core unit tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode version
+        run: xcodebuild -version
+      - name: Run tests
+        run: swift test --package-path Packages/DataTrackerCore
+
+  build-app:
+    name: Build app, tunnel and widget
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate
+      - name: Build for iOS devices (unsigned)
+        run: |
+          xcodebuild build \
+            -project DataTracker.xcodeproj \
+            -scheme DataTracker \
+            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -skipPackagePluginValidation \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO > build.log 2>&1 \
+            || { grep -E "error:" build.log | sort -u | head -150; tail -30 build.log; exit 1; }
+          grep -E "warning:" build.log | grep -v "/SourcePackages/" | sort -u | head -50 || true
+          # App Shortcuts only appear in Shortcuts / Control Center if their metadata is in the app bundle.
+          APP=build/DerivedData/Build/Products/Debug-iphoneos/DataTracker.app
+          ls "$APP/Metadata.appintents" || { echo "App Shortcuts metadata missing from the app bundle"; exit 1; }
+          ls "$APP/PlugIns"
+          tail -3 build.log
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
