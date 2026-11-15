@@ -9,3 +9,6 @@ BUNDLE_ID_PREFIX = com.example
 
 // Shared container used by the app, the VPN extension and the widget.
 APP_GROUP_ID = group.$(BUNDLE_ID_PREFIX).datatracker
+
+// Values written by scripts/install-on-iphones.sh (not committed) override the ones above.
+#include? "Local.xcconfig"
