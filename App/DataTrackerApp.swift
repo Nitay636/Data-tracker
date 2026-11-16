@@ -17,7 +17,7 @@ struct DataTrackerApp: App {
                 Task {
                     await model.vpn.load()
                     await model.vpn.resumeIfNeeded()
-                    model.reload(flush: true)
+                    model.reload(flush: true, quiet: true)
                 }
             case .background:
                 BackgroundRefresh.schedule()

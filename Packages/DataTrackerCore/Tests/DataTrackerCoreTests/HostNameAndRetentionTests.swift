@@ -70,3 +70,36 @@ final class HostNameAndRetentionTests: XCTestCase {
         store.compact()
     }
 }
+
+final class LastUsedAndMappingDateTests: XCTestCase {
+    func testEntriesAndDomainsCarryLastUsedHour() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let hour: Int64 = 490_000
+        let start = Hour.start(of: hour)
+        let period = UsagePeriod(kind: .day, start: start, end: start.addingTimeInterval(86_400), granularity: .hour)
+        let rows = [
+            DomainUsageRow(hour: hour, domain: "netflix.com", kind: .wifi, bytes: ByteCount(received: 10)),
+            DomainUsageRow(hour: hour + 3, domain: "nflxvideo.net", kind: .wifi, bytes: ByteCount(received: 5)),
+            DomainUsageRow(hour: hour + 1, domain: "example.org", kind: .cellular, bytes: ByteCount(received: 1))
+        ]
+        let report = UsageReportBuilder(resolver: AppResolver(), calendar: calendar)
+            .build(period: period, now: start.addingTimeInterval(10 * 3600), interfaceRows: [], domainRows: rows, sessions: [])
+        XCTAssertEqual(report.entry(for: .app("netflix"))?.lastUsed, Hour.start(of: hour + 4))
+        XCTAssertEqual(report.domains(for: .app("netflix")).first { $0.domain == "netflix.com" }?.lastUsed, Hour.start(of: hour + 1))
+        XCTAssertEqual(report.usage(ofDomain: "example.org").bytes.cellular.received, 1)
+    }
+
+    func testMappingsRecordCreationDate() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("u.sqlite")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try UsageStore(url: url)
+        let before = Date().addingTimeInterval(-1)
+        try store.setMapping(domain: "a.com", target: .custom("A"))
+        let details = try store.mappingDetails()
+        XCTAssertEqual(details.map(\.domain), ["a.com"])
+        XCTAssertGreaterThanOrEqual(details[0].created, before)
+        // Reopening runs the migration again without error.
+        _ = try UsageStore(url: url)
+    }
+}

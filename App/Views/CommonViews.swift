@@ -15,6 +15,7 @@ struct PeriodHeader: View {
                 }
             }
             .pickerStyle(.segmented)
+            .sensoryFeedback(.selection, trigger: model.periodKind)
 
             HStack {
                 Button {
@@ -41,6 +42,7 @@ struct PeriodHeader: View {
                 .accessibilityLabel("Next")
             }
             .buttonStyle(.borderless)
+            .sensoryFeedback(.selection, trigger: model.offset)
         }
     }
 }
@@ -272,7 +274,9 @@ struct TrackingStatusBanner: View {
                 .foregroundStyle(.orange)
             Text(title).font(.subheadline.weight(.semibold))
             Spacer()
-            Group {
+            if model.vpn.isBusy || model.vpn.phase == .connecting {
+                ProgressView()
+            } else {
                 Button(button) {
                     Task {
                         await model.vpn.turnOn()
@@ -281,7 +285,6 @@ struct TrackingStatusBanner: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(model.vpn.isBusy)
             }
         }
         .padding(.vertical, 4)

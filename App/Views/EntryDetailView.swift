@@ -7,6 +7,7 @@ struct EntryDetailView: View {
     @Environment(AppModel.self) private var model
     let id: EntryID
     @State private var assigningDomain: AssignTarget?
+    @AppStorage("order.domains") private var order = ListOrder()
 
     var body: some View {
         let info = AppResolver.info(for: id)
@@ -43,6 +44,9 @@ struct EntryDetailView: View {
         }
         .navigationTitle(info.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { LoadingToolbar(isLoading: model.isLoading) }
+        // Looking at an app's usage is the main feature; ask for a rating once, afterwards.
+        .onDisappear { model.didUseMainFeature() }
         .sheet(item: $assigningDomain) { target in
             AssignDomainView(domain: target.domain)
         }
@@ -71,7 +75,8 @@ struct EntryDetailView: View {
     private func domainsSection(_ domains: [DomainBreakdown]) -> some View {
         if !domains.isEmpty, id != .hotspot, id != .untracked {
             Section {
-                ForEach(domains) { item in
+                ListOrderRow(order: $order)
+                ForEach(order.sorted(domains, amount: { $0.bytes.total }, date: { $0.lastUsed })) { item in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(item.domain)
@@ -130,6 +135,10 @@ struct AssignDomainView: View {
     let domain: String
     @State private var search = ""
     @State private var newName = ""
+    @FocusState private var nameFocused: Bool
+    @FocusState private var searchFocused: Bool
+    @State private var keyboardUp = false
+    @AppStorage("order.assignApps") private var order = ListOrder()
 
     var body: some View {
         NavigationStack {
@@ -137,6 +146,7 @@ struct AssignDomainView: View {
                 Section {
                     HStack {
                         TextField("New app name", text: $newName)
+                            .focused($nameFocused)
                             .textInputAutocapitalization(.words)
                             .submitLabel(.done)
                             .onSubmit(createNew)
@@ -157,6 +167,7 @@ struct AssignDomainView: View {
                 }
 
                 Section("Built-in apps") {
+                    ListOrderRow(order: $order)
                     ForEach(catalogMatches) { app in
                         choiceRow(id: .app(app.id))
                     }
@@ -172,6 +183,15 @@ struct AssignDomainView: View {
                 }
             }
             .searchable(text: $search, prompt: "Search apps")
+            .searchFocused($searchFocused)
+            .onChange(of: nameFocused || searchFocused) { _, focused in keyboardUp = focused }
+            .onChange(of: keyboardUp) { _, up in
+                if !up {
+                    nameFocused = false
+                    searchFocused = false
+                }
+            }
+            .keyboardFirstSwipe($keyboardUp)
             .navigationTitle(domain)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -183,9 +203,13 @@ struct AssignDomainView: View {
     }
 
     private var catalogMatches: [AppDefinition] {
-        AppCatalog.all
+        let matching = AppCatalog.all
             .filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        // Usage and last use in the current period; apps without usage keep alphabetical order.
+        return order.sorted(matching,
+                            amount: { model.report?.entry(for: .app($0.id))?.bytes.total ?? 0 },
+                            date: { model.report?.entry(for: .app($0.id))?.lastUsed })
     }
 
     private func choiceRow(id: EntryID) -> some View {

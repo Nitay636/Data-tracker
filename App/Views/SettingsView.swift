@@ -1,10 +1,13 @@
+import StoreKit
 import SwiftUI
 import DataTrackerCore
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.requestReview) private var requestReview
     @State private var confirmInstall = false
     @State private var pendingRetention: RetentionPeriod?
+    @State private var keyboardUp = false
 
     var body: some View {
         NavigationStack {
@@ -33,7 +36,37 @@ struct SettingsView: View {
                     LabeledContent("Storage used", value: model.databaseSize.bytesText)
                     NavigationLink("Domain Assignments") { AssignmentsView() }
                 }
+                Section {
+                    Button {
+                        model.showOnboarding = true
+                    } label: {
+                        Label("Introduction", systemImage: "sparkles")
+                    }
+                    Button {
+                        requestReview()
+                    } label: {
+                        Label("Rate DataTracker", systemImage: "star")
+                    }
+                }
+                ContactDeveloperSection(isFocused: $keyboardUp)
+                Section {
+                    LabeledContent("Version", value: "\(AppInfo.version) (\(AppInfo.build))")
+                }
+                Section {
+                    VStack(spacing: 10) {
+                        Text(AppInfo.name)
+                            .font(.headline)
+                        Image("AppIconImage")
+                            .resizable()
+                            .frame(width: 64, height: 64)
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .accessibilityHidden(true)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+                }
             }
+            .keyboardFirstSwipe($keyboardUp)
             .navigationTitle("Settings")
             .alert("Add the tracking VPN?", isPresented: $confirmInstall) {
                 Button("Continue") { Task { await model.vpn.turnOn(); model.reload() } }
@@ -70,8 +103,12 @@ struct SettingsView: View {
                 })) {
                 HStack(spacing: 8) {
                     Text("Tracking")
-                    Circle().fill(statusColor).frame(width: 8, height: 8)
-                    Text(statusText).foregroundStyle(.secondary)
+                    if vpn.isBusy || vpn.phase == .connecting || vpn.phase == .disconnecting {
+                        ProgressView()
+                    } else {
+                        Circle().fill(statusColor).frame(width: 8, height: 8)
+                        Text(statusText).foregroundStyle(.secondary)
+                    }
                 }
             }
             .disabled(vpn.isBusy)
@@ -104,26 +141,31 @@ struct SettingsView: View {
 
 struct AssignmentsView: View {
     @Environment(AppModel.self) private var model
+    @AppStorage("order.assignments") private var order = ListOrder(key: .date, ascending: false)
 
     var body: some View {
-        let items = model.mappings.sorted { $0.key < $1.key }
+        let items = order.sorted(model.mappings.map { (domain: $0.key, target: $0.value) },
+                                 amount: { model.report?.usage(ofDomain: $0.domain).bytes.total ?? 0 },
+                                 date: { model.mappingDates[$0.domain] })
         List {
             if items.isEmpty {
                 ContentUnavailableView("No assignments", systemImage: "arrow.triangle.merge")
+            } else {
+                ListOrderRow(order: $order)
             }
-            ForEach(items, id: \.key) { item in
-                let info = EntryID(key: item.value).map(AppResolver.info(for:))
+            ForEach(items, id: \.domain) { item in
+                let info = EntryID(key: item.target).map(AppResolver.info(for:))
                 HStack {
                     VStack(alignment: .leading) {
-                        Text(item.key)
-                        Text(info?.name ?? item.value).font(.caption).foregroundStyle(.secondary)
+                        Text(item.domain)
+                        Text(info?.name ?? item.target).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     if let info { EntryIcon(info: info, size: 24) }
                 }
             }
             .onDelete { offsets in
-                for index in offsets { model.assign(domain: items[index].key, to: nil) }
+                for index in offsets { model.assign(domain: items[index].domain, to: nil) }
             }
         }
         .navigationTitle("Domain Assignments")
