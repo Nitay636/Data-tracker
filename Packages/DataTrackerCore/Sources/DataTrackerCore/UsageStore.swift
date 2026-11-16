@@ -255,6 +255,29 @@ public final class UsageStore: @unchecked Sendable {
         }
     }
 
+    // MARK: Retention
+
+    /// Deletes usage and tracking history older than `date`. Domain assignments are kept.
+    public func deleteHistory(before date: Date) throws {
+        let hour = Hour.index(of: date)
+        try transaction {
+            for sql in ["DELETE FROM iface_usage WHERE hour < ?", "DELETE FROM domain_usage WHERE hour < ?"] {
+                let statement = try prepare(sql)
+                statement.bind(1, hour)
+                try statement.stepDone()
+            }
+            let sessions = try prepare("DELETE FROM tracking_session WHERE end < ?")
+            sessions.bind(1, date.timeIntervalSince1970)
+            try sessions.stepDone()
+        }
+    }
+
+    /// Returns unused space to the system after large deletions.
+    public func compact() {
+        try? execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        try? execute("VACUUM")
+    }
+
     // MARK: Info
 
     public func earliestHour() throws -> Int64? {

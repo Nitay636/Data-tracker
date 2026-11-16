@@ -34,7 +34,7 @@ public struct DomainBreakdown: Identifiable, Hashable, Sendable {
 /// Everything shown for one period: totals, chart buckets, and the ranked app list.
 public struct UsageReport: Sendable {
     /// Domain label used for system traffic that iOS sends outside the VPN.
-    public static let outsideVPNLabel = "Traffic outside the VPN"
+    public static let outsideVPNLabel = "Outside the VPN"
 
     public let period: UsagePeriod
     public let generatedAt: Date

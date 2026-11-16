@@ -39,6 +39,7 @@ final class AppModel {
     private(set) var mappings: [String: String] = [:]
     private(set) var loadError: String?
     private(set) var autoResume: Bool
+    private(set) var retention: RetentionPeriod
     var filter: NetworkFilter = .all
 
     @ObservationIgnored private let settings = AppGroup.settings
@@ -48,6 +49,7 @@ final class AppModel {
         monthMode = settings.monthMode
         billingDay = settings.billingDay
         autoResume = settings.autoResumeAfterOtherVPN
+        retention = settings.retention
     }
 
     // MARK: Period
@@ -93,6 +95,13 @@ final class AppModel {
         }
     }
 
+    func setRetention(_ period: RetentionPeriod) {
+        retention = period
+        settings.retention = period
+        settings.lastPrune = nil // apply right away
+        reload()
+    }
+
     // MARK: Data
 
     /// Reloads the report. With `flush`, the tunnel writes its buffered counts first.
@@ -123,6 +132,7 @@ final class AppModel {
                                     userInfo: [NSLocalizedDescriptionKey: "The usage database could not be opened."]))
         }
         DeviceSampler.sample(into: store)
+        pruneIfNeeded(store)
         do {
             let mappings = try store.mappings()
             let interfaceRows = try store.interfaceUsage(fromHour: period.startHour, toHour: period.endHour)
@@ -134,6 +144,20 @@ final class AppModel {
             return .success((report, mappings))
         } catch {
             return .failure(error)
+        }
+    }
+
+    /// Deletes history older than the chosen retention, at most every few hours.
+    nonisolated static func pruneIfNeeded(_ store: UsageStore) {
+        let settings = AppGroup.settings
+        if let last = settings.lastPrune, Date().timeIntervalSince(last) < 6 * 3600 { return }
+        settings.lastPrune = Date()
+        guard let cutoff = settings.retention.cutoff(now: Date()) else { return }
+        do {
+            try store.deleteHistory(before: cutoff)
+            store.compact()
+        } catch {
+            NSLog("DataTracker: pruning failed: \(error)")
         }
     }
 

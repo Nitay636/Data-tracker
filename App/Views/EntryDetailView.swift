@@ -51,39 +51,19 @@ struct EntryDetailView: View {
     private func shareText(entry: UsageEntry?, report: UsageReport) -> String? {
         guard let entry, report.totals.total > 0 else { return nil }
         let percent = Double(entry.bytes.total) / Double(report.totals.total) * 100
-        return percent < 0.1 ? "Less than 0.1% of all data" : String(format: "%.1f%% of all data", percent)
+        return percent < 0.1 ? "<0.1% of total" : String(format: "%.1f%% of total", percent)
     }
 
     @ViewBuilder
     private var explanation: some View {
-        switch id {
-        case .app(let appID) where appID == AppCatalog.systemID:
-            Section {
-                Text("Includes Apple services (updates, iCloud sync, push notifications, Siri, Maps) and “Traffic outside the VPN”: data iOS sends around every VPN, measured as the difference between the network totals and what the tracking VPN saw.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-        case .hotspot:
-            Section {
-                Text("Data used by other devices connected to this iPhone's Personal Hotspot. It's part of your cellular usage.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-        case .untracked:
-            Section {
-                Text("Data used while per-app tracking was off or paused (for example while another VPN was on). Totals are still accurate; only the split by app is unknown.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-        case .domain:
+        if case .domain(let domain) = id {
             Section {
                 Button {
-                    if case .domain(let domain) = id { assigningDomain = AssignTarget(domain: domain) }
+                    assigningDomain = AssignTarget(domain: domain)
                 } label: {
                     Label("Assign to an app…", systemImage: "arrow.triangle.merge")
                 }
-            } footer: {
-                Text("This domain isn't in the built-in list. Assign it to an app to group its usage there.")
             }
-        default:
-            EmptyView()
         }
     }
 
@@ -126,8 +106,6 @@ struct EntryDetailView: View {
                 }
             } header: {
                 Text("Domains")
-            } footer: {
-                Text("Long-press or swipe a domain to assign it to a different app.")
             }
         }
     }
@@ -166,9 +144,7 @@ struct AssignDomainView: View {
                             .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                 } header: {
-                    Text("Create an app")
-                } footer: {
-                    Text("Usage from \(domain) will be grouped under this name.")
+                    Text("New app")
                 }
 
                 let custom = model.customAppNames.filter { search.isEmpty || $0.localizedCaseInsensitiveContains(search) }

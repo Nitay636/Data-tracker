@@ -11,6 +11,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private let flushQueue = DispatchQueue(label: "datatracker.flush")
     private var flushTimer: DispatchSourceTimer?
     private var sessionID: Int64?
+    private var isStopping = false
 
     override init() {
         let meter = DomainTrafficAccumulator()
@@ -26,17 +27,27 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             guard let self else { return }
             switch result {
             case .failure(let error):
+                AppGroup.settings.lastTunnelError = "Local proxy failed: \(error.localizedDescription)"
                 completionHandler(error)
             case .success(let port):
                 self.setTunnelNetworkSettings(Self.networkSettings()) { error in
                     if let error {
+                        AppGroup.settings.lastTunnelError = "Network settings failed: \(error.localizedDescription)"
                         self.server.stop()
                         completionHandler(error)
                         return
                     }
-                    Socks5Tunnel.run(withConfig: .string(content: TunnelConfiguration.yaml(socksPort: port))) { code in
-                        NSLog("DataTracker tunnel: hev-socks5-tunnel exited with code \(code)")
+                    Socks5Tunnel.run(withConfig: .string(content: TunnelConfiguration.yaml(socksPort: port))) { [weak self] code in
+                        guard let self, !self.isStopping else { return }
+                        // The packet engine stopped on its own: shut the tunnel down instead of leaving
+                        // the phone routed into a tunnel that no longer forwards anything.
+                        let message = "Packet engine stopped (code \(code))"
+                        NSLog("DataTracker tunnel: \(message)")
+                        AppGroup.settings.lastTunnelError = message
+                        self.cancelTunnelWithError(NSError(domain: "DataTracker", code: Int(code),
+                                                           userInfo: [NSLocalizedDescriptionKey: message]))
                     }
+                    AppGroup.settings.lastTunnelError = nil
                     self.beginTracking()
                     completionHandler(nil)
                 }
@@ -45,6 +56,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
+        isStopping = true
         flushTimer?.cancel()
         flushTimer = nil
         Socks5Tunnel.quit()
@@ -131,10 +143,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         ]
         settings.ipv6Settings = ipv6
 
-        // Answered by hev-socks5-tunnel's mapped DNS, so every connection arrives with its host name.
-        let dns = NEDNSSettings(servers: [TunnelConfiguration.dnsAddress])
-        dns.matchDomains = [""]
-        settings.dnsSettings = dns
+        // DNS is deliberately not overridden: apps keep the network's own DNS servers, and the proxy
+        // learns host names from DNS answers and TLS server names instead.
         return settings
     }
 }

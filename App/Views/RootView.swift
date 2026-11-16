@@ -74,7 +74,7 @@ struct UsageView: View {
         let top = Array(report.entries.prefix(5))
         Section {
             if top.isEmpty {
-                Text("No usage recorded for this period yet.")
+                Text("No usage yet")
                     .foregroundStyle(.secondary)
             }
             ForEach(top) { entry in
@@ -87,10 +87,6 @@ struct UsageView: View {
             }
         } header: {
             Text("Top apps")
-        } footer: {
-            if report.trackedShare < 0.999 && report.trackedShare > 0 {
-                Text("Per-app tracking covered \(Int((report.trackedShare * 100).rounded()))% of this period. The rest is under “Not tracked”.")
-            }
         }
     }
 }
@@ -114,7 +110,7 @@ struct AppsView: View {
                     let entries = sortedEntries(report)
                     Section {
                         if entries.isEmpty {
-                            Text(searchText.isEmpty ? "No usage on this network for this period." : "No matches.")
+                            Text(searchText.isEmpty ? "No usage" : "No matches")
                                 .foregroundStyle(.secondary)
                         }
                         ForEach(entries) { entry in
@@ -122,15 +118,13 @@ struct AppsView: View {
                                 EntryRow(entry: entry, filter: model.filter, maximum: model.filter.value(entries.first?.bytes ?? .zero))
                             }
                         }
-                    } footer: {
-                        Text("Per-app numbers come from the on-device VPN and are estimates. “iOS & System Services” includes traffic iOS sends outside VPNs.")
                     }
                 } else {
                     ProgressView().frame(maxWidth: .infinity)
                 }
             }
             .navigationTitle("Apps")
-            .searchable(text: $searchText, prompt: "Search apps and domains")
+            .searchable(text: $searchText, prompt: "Search")
             .navigationDestination(for: EntryID.self) { id in
                 EntryDetailView(id: id)
             }

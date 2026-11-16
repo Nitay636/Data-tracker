@@ -6,6 +6,9 @@ import DataTrackerCore
 /// download (internet → iPhone) and `sent` is upload.
 typealias TrafficReporter = (_ label: String, _ kind: NetworkKind, _ received: Int, _ sent: Int) -> Void
 
+/// IP address → host name, learned from DNS answers and TLS / HTTP host names seen in the tunnel.
+private let hostNames = HostNameCache()
+
 private protocol Relay: AnyObject {
     func cancel()
 }
@@ -14,7 +17,9 @@ private protocol Relay: AnyObject {
 /// apps send into SOCKS5 connections to this server; it opens the real connections to the internet
 /// and counts the bytes in each direction.
 ///
-/// Connections opened by a packet tunnel provider never go through its own tunnel, so there is no loop.
+/// hev-socks5-tunnel hands over destination IP addresses (DNS is left untouched), so the proxy
+/// connects to IPs and never needs to resolve names itself. Connections opened by a packet tunnel
+/// provider don't go through its own tunnel, so there is no loop.
 final class LocalSocksServer {
     enum ServerError: Error { case noFreePort }
 
@@ -230,7 +235,8 @@ private enum Endpoints {
     }
 
     static func label(for address: Socks5.Address) -> String {
-        address.isDomain ? DomainNormalizer.normalize(address.hostString) : address.hostString
+        if address.isDomain { return DomainNormalizer.normalize(address.hostString) }
+        return hostNames.name(for: address.hostString) ?? address.hostString
     }
 }
 
@@ -342,6 +348,7 @@ private final class TCPRelay: Relay {
             needsSniffing = false
             if let host = TrafficSniffer.hostName(in: [UInt8](data.prefix(4096))) {
                 label = DomainNormalizer.normalize(host)
+                hostNames.record(host: host, for: target.hostString)
             }
         }
         remote?.send(content: data, completion: .contentProcessed { [weak self] error in
@@ -460,6 +467,9 @@ private final class UDPRelay: Relay {
                 return
             case .parsed(let frame, let consumed):
                 offset += consumed
+                // Drop QUIC (UDP 443): apps fall back to TCP, where the TLS server name shows
+                // which service the traffic belongs to.
+                if frame.address.port == 443 { continue }
                 flow(for: frame.address).send(frame.payload)
             }
         }
@@ -495,6 +505,7 @@ private final class UDPFlow {
     private let onDatagram: ([UInt8]) -> Void
     private var kind = NetworkKind.wifi
     private var cancelled = false
+    private let isDNS: Bool
 
     init(address: Socks5.Address, queue: DispatchQueue, label: String, report: @escaping TrafficReporter,
          onDatagram: @escaping ([UInt8]) -> Void) {
@@ -503,6 +514,7 @@ private final class UDPFlow {
         self.report = report
         self.onDatagram = onDatagram
         self.queue = queue
+        self.isDNS = address.port == 53
         connection.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
             switch state {
@@ -545,8 +557,12 @@ private final class UDPFlow {
         connection.receiveMessage { [weak self] data, _, _, error in
             guard let self, !self.cancelled else { return }
             if let data, !data.isEmpty {
+                let bytes = [UInt8](data)
+                if self.isDNS, let answer = DNSResponseParser.parse(bytes) {
+                    hostNames.record(answer)
+                }
                 self.report(self.label, self.kind, data.count, 0)
-                self.onDatagram([UInt8](data))
+                self.onDatagram(bytes)
             }
             if error == nil { self.receive() }
         }
