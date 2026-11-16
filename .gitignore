@@ -12,3 +12,7 @@ xcuserdata/
 *.xcuserstate
 
 .DS_Store
+
+# Personal signing settings and local build output
+Config/Local.xcconfig
+build.log

@@ -51,14 +51,24 @@ The VPN uses [Tun2SocksKit](https://github.com/EbrahimTahernejad/Tun2SocksKit), 
 
 ## Building
 
-Requirements: a Mac with Xcode 16 or newer, and a **paid** Apple Developer account (Network Extensions need it).
+Requirements: a Mac with Xcode 16 or newer, signed in to a **paid** Apple Developer account (Xcode → Settings → Accounts). Network Extensions need the paid program.
+
+### One command: install on every connected iPhone
+
+```
+./scripts/install-on-iphones.sh
+```
+
+Plug in each iPhone, unlock it and tap **Trust**. The script installs XcodeGen if needed, asks once for your Team ID, generates the project, registers each phone with your developer account, builds, and installs. Your Team ID and bundle ID go in `Config/Local.xcconfig`, which isn't committed. If a phone has never been used with Xcode, turn on Developer Mode there (Settings → Privacy & Security → Developer Mode), restart it, and run the script again.
+
+On each iPhone, open DataTracker → Settings → Per-app tracking → Continue → **Allow**. If iOS reports an untrusted developer: Settings → General → VPN & Device Management → your account → Trust.
+
+### Manually in Xcode
 
 1. `brew install xcodegen`
-2. Edit `Config/Signing.xcconfig`: set `DEVELOPMENT_TEAM` and `BUNDLE_ID_PREFIX`.
+2. Set `DEVELOPMENT_TEAM` and `BUNDLE_ID_PREFIX` in `Config/Signing.xcconfig`, or in `Config/Local.xcconfig`.
 3. `xcodegen generate && open DataTracker.xcodeproj`
-4. Under Signing & Capabilities, Xcode's automatic signing should create the App Group and Network Extension capabilities for all three targets. If it doesn't, add them on developer.apple.com: App Group `group.<prefix>.datatracker`, plus Network Extensions → Packet Tunnel on the app ID and the `.tunnel` ID.
-5. Run on a **real iPhone**. Network Extensions don't work in the Simulator.
-6. In the app, go to Settings → Per-app tracking → Continue → **Allow** in the iOS prompt.
+4. Select a connected iPhone and press ⌘R. Network Extensions don't work in the Simulator.
 
 Run the logic tests with `swift test --package-path Packages/DataTrackerCore`. CI (`.github/workflows/ci.yml`) runs them and builds all three targets unsigned on every push.
 
