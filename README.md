@@ -9,7 +9,7 @@ An iOS 18 app that tracks internet data usage on your iPhone:
 - **Home-screen widget** (small and medium) showing today's usage and top apps
 - **Auto-resume:** tracking turns itself back on after you've used another VPN (can be turned off in Settings)
 
-Everything stays on the device. Usage history is kept indefinitely.
+Everything stays on the device. Settings → Keep history sets how long usage is kept (1 month to forever).
 
 ## How it works
 
@@ -47,7 +47,7 @@ project.yml          XcodeGen spec (the .xcodeproj is generated, not committed)
 Config/Signing.xcconfig     Your Team ID and bundle ID prefix
 ```
 
-The VPN uses [Tun2SocksKit](https://github.com/EbrahimTahernejad/Tun2SocksKit), a wrapper around [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) (both MIT licensed). It turns the tunnel's packets into connections and answers DNS with mapped addresses, so each connection reaches the proxy with its host name. The proxy (`Tunnel/LocalSocksServer.swift`) opens the real connection with Network.framework and records bytes per domain and per network (Wi-Fi or cellular). It reads no content apart from the TLS server name or HTTP `Host` header of connections that were opened to a bare IP address.
+The VPN uses [Tun2SocksKit](https://github.com/EbrahimTahernejad/Tun2SocksKit), a wrapper around [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) (both MIT licensed). It turns the tunnel's packets into connections to the proxy (`Tunnel/LocalSocksServer.swift`), which opens the real connection to the same IP address with Network.framework and records bytes per domain and per network (Wi-Fi or cellular). DNS is left untouched. The domain comes from the TLS server name or HTTP `Host` header at the start of each connection, or from DNS answers that pass through the tunnel. No other content is read. QUIC (UDP 443) is refused so apps fall back to TCP, where the server name is visible.
 
 ## Building
 

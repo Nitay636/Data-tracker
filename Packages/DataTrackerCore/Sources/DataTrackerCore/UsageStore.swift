@@ -1,6 +1,13 @@
 import Foundation
 import SQLite3
 
+public struct DomainMapping: Equatable, Sendable {
+    public var domain: String
+    /// `EntryID.key` of the app the domain is assigned to.
+    public var target: String
+    public var created: Date
+}
+
 public struct SQLiteError: Error, CustomStringConvertible {
     public var code: Int32
     public var message: String
@@ -58,6 +65,18 @@ public final class UsageStore: @unchecked Sendable {
         CREATE INDEX IF NOT EXISTS tracking_session_end ON tracking_session(end);
         CREATE TABLE IF NOT EXISTS domain_mapping(domain TEXT PRIMARY KEY, target TEXT NOT NULL);
         """)
+        // v1.1: remember when each assignment was made.
+        if try !columnExists("created", in: "domain_mapping") {
+            try execute("ALTER TABLE domain_mapping ADD COLUMN created REAL NOT NULL DEFAULT 0")
+        }
+    }
+
+    private func columnExists(_ column: String, in table: String) throws -> Bool {
+        let statement = try prepare("PRAGMA table_info(\(table))")
+        while try statement.step() {
+            if statement.string(1) == column { return true }
+        }
+        return false
     }
 
     // MARK: Transactions
@@ -239,13 +258,27 @@ public final class UsageStore: @unchecked Sendable {
         }
     }
 
+    /// Assignments with the date each was made.
+    public func mappingDetails() throws -> [DomainMapping] {
+        try locked {
+            let statement = try prepare("SELECT domain, target, created FROM domain_mapping")
+            var result: [DomainMapping] = []
+            while try statement.step() {
+                result.append(DomainMapping(domain: statement.string(0), target: statement.string(1),
+                                            created: Date(timeIntervalSince1970: statement.double(2))))
+            }
+            return result
+        }
+    }
+
     /// Pass `nil` to remove an assignment.
     public func setMapping(domain: String, target: EntryID?) throws {
         try transaction {
             if let target {
-                let statement = try prepare("INSERT OR REPLACE INTO domain_mapping(domain, target) VALUES(?, ?)")
+                let statement = try prepare("INSERT OR REPLACE INTO domain_mapping(domain, target, created) VALUES(?, ?, ?)")
                 statement.bind(1, domain)
                 statement.bind(2, target.key)
+                statement.bind(3, Date().timeIntervalSince1970)
                 try statement.stepDone()
             } else {
                 let statement = try prepare("DELETE FROM domain_mapping WHERE domain = ?")
@@ -253,6 +286,29 @@ public final class UsageStore: @unchecked Sendable {
                 try statement.stepDone()
             }
         }
+    }
+
+    // MARK: Retention
+
+    /// Deletes usage and tracking history older than `date`. Domain assignments are kept.
+    public func deleteHistory(before date: Date) throws {
+        let hour = Hour.index(of: date)
+        try transaction {
+            for sql in ["DELETE FROM iface_usage WHERE hour < ?", "DELETE FROM domain_usage WHERE hour < ?"] {
+                let statement = try prepare(sql)
+                statement.bind(1, hour)
+                try statement.stepDone()
+            }
+            let sessions = try prepare("DELETE FROM tracking_session WHERE end < ?")
+            sessions.bind(1, date.timeIntervalSince1970)
+            try sessions.stepDone()
+        }
+    }
+
+    /// Returns unused space to the system after large deletions.
+    public func compact() {
+        try? execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        try? execute("VACUUM")
     }
 
     // MARK: Info

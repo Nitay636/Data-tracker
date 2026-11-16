@@ -6,6 +6,9 @@ import DataTrackerCore
 /// download (internet → iPhone) and `sent` is upload.
 typealias TrafficReporter = (_ label: String, _ kind: NetworkKind, _ received: Int, _ sent: Int) -> Void
 
+/// IP address → host name, learned from DNS answers and TLS / HTTP host names seen in the tunnel.
+private let hostNames = HostNameCache()
+
 private protocol Relay: AnyObject {
     func cancel()
 }
@@ -14,7 +17,9 @@ private protocol Relay: AnyObject {
 /// apps send into SOCKS5 connections to this server; it opens the real connections to the internet
 /// and counts the bytes in each direction.
 ///
-/// Connections opened by a packet tunnel provider never go through its own tunnel, so there is no loop.
+/// hev-socks5-tunnel hands over destination IP addresses (DNS is left untouched), so the proxy
+/// connects to IPs and never needs to resolve names itself. Connections opened by a packet tunnel
+/// provider don't go through its own tunnel, so there is no loop.
 final class LocalSocksServer {
     enum ServerError: Error { case noFreePort }
 
@@ -24,6 +29,12 @@ final class LocalSocksServer {
     private let report: TrafficReporter
     private var listener: NWListener?
     private var sessions: [ObjectIdentifier: SocksSession] = [:]
+    private var accepted = 0
+
+    /// Counters for the diagnostic log.
+    var summary: String {
+        queue.sync { "proxy accepted \(accepted), open \(sessions.count), \(Diagnostics.text)" }
+    }
 
     init(report: @escaping TrafficReporter) {
         self.report = report
@@ -49,13 +60,15 @@ final class LocalSocksServer {
             return
         }
         let port = Self.candidatePorts[candidate]
+        // Bind exactly 127.0.0.1:port, the address the packet engine connects to. Without an explicit
+        // address the listener did not accept the engine's IPv4 loopback connections.
         let parameters = NWParameters.tcp
-        parameters.requiredInterfaceType = .loopback
         parameters.allowLocalEndpointReuse = true
+        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port)!)
 
         let listener: NWListener
         do {
-            listener = try NWListener(using: parameters, on: NWEndpoint.Port(rawValue: port)!)
+            listener = try NWListener(using: parameters)
         } catch {
             listen(candidate: candidate + 1, completion: completion)
             return
@@ -69,7 +82,8 @@ final class LocalSocksServer {
                 settled = true
                 self.listener = listener
                 completion(.success(port))
-            case .failed:
+            case .failed(let error):
+                TunnelLog.write("listener on \(port) failed: \(error)")
                 settled = true
                 listener.cancel()
                 self.listen(candidate: candidate + 1, completion: completion)
@@ -84,6 +98,7 @@ final class LocalSocksServer {
     }
 
     private func accept(_ connection: NWConnection) {
+        accepted += 1
         let session = SocksSession(client: connection, queue: queue, report: report)
         let id = ObjectIdentifier(session)
         sessions[id] = session
@@ -160,6 +175,7 @@ private final class SocksSession {
                 receiveHandshake()
                 return
             case .invalid:
+                TunnelLog.detail("invalid greeting \(buffer.prefix(16).map { String($0) })")
                 close()
                 return
             case .parsed(let methods, let consumed):
@@ -178,8 +194,10 @@ private final class SocksSession {
         case .needMoreData:
             receiveHandshake()
         case .invalid:
+            TunnelLog.detail("invalid request \(buffer.prefix(32).map { String($0) })")
             close()
         case .parsed(let request, let consumed):
+            TunnelLog.detail("request cmd \(request.command) \(request.address)")
             buffer.removeFirst(consumed)
             let leftover = buffer
             buffer = []
@@ -197,6 +215,7 @@ private final class SocksSession {
                 relay = udp
                 udp.start(leftover: leftover)
             default:
+                TunnelLog.detail("unsupported command \(request.command)")
                 send(Socks5.reply(.commandNotSupported)) { [weak self] in self?.close() }
             }
         }
@@ -230,7 +249,8 @@ private enum Endpoints {
     }
 
     static func label(for address: Socks5.Address) -> String {
-        address.isDomain ? DomainNormalizer.normalize(address.hostString) : address.hostString
+        if address.isDomain { return DomainNormalizer.normalize(address.hostString) }
+        return hostNames.name(for: address.hostString) ?? address.hostString
     }
 }
 
@@ -272,6 +292,8 @@ private final class TCPRelay: Relay {
             case .ready:
                 if let kind = Endpoints.kind(of: remote?.currentPath) { self.kind = kind }
                 guard !self.replied else { return }
+                Diagnostics.tcpReady += 1
+                TunnelLog.detail("tcp ready \(self.target) via \(remote?.currentPath?.availableInterfaces.first?.name ?? "?")")
                 self.replied = true
                 self.client.send(content: Data(Socks5.reply(.succeeded)), completion: .contentProcessed { _ in })
                 if leftover.isEmpty {
@@ -280,8 +302,12 @@ private final class TCPRelay: Relay {
                     self.forwardToRemote(Data(leftover), isComplete: false)
                 }
                 self.readRemote()
-            case .failed:
+            case .failed(let error):
+                Diagnostics.tcpFailed += 1
+                TunnelLog.detail("tcp failed \(self.target): \(error)")
                 self.fail()
+            case .waiting(let error):
+                TunnelLog.detail("tcp waiting \(self.target): \(error)")
             default:
                 break
             }
@@ -293,6 +319,8 @@ private final class TCPRelay: Relay {
 
         queue.asyncAfter(deadline: .now() + 15) { [weak self] in
             guard let self, !self.replied, !self.finished else { return }
+            Diagnostics.tcpTimedOut += 1
+            TunnelLog.detail("tcp timed out \(self.target)")
             self.fail()
         }
     }
@@ -342,6 +370,7 @@ private final class TCPRelay: Relay {
             needsSniffing = false
             if let host = TrafficSniffer.hostName(in: [UInt8](data.prefix(4096))) {
                 label = DomainNormalizer.normalize(host)
+                hostNames.record(host: host, for: target.hostString)
             }
         }
         remote?.send(content: data, completion: .contentProcessed { [weak self] error in
@@ -460,6 +489,10 @@ private final class UDPRelay: Relay {
                 return
             case .parsed(let frame, let consumed):
                 offset += consumed
+                // Drop QUIC (UDP 443): apps fall back to TCP, where the TLS server name shows
+                // which service the traffic belongs to.
+                if frame.address.port == 443 { continue }
+                Diagnostics.udpSent += 1
                 flow(for: frame.address).send(frame.payload)
             }
         }
@@ -495,6 +528,7 @@ private final class UDPFlow {
     private let onDatagram: ([UInt8]) -> Void
     private var kind = NetworkKind.wifi
     private var cancelled = false
+    private let isDNS: Bool
 
     init(address: Socks5.Address, queue: DispatchQueue, label: String, report: @escaping TrafficReporter,
          onDatagram: @escaping ([UInt8]) -> Void) {
@@ -503,12 +537,14 @@ private final class UDPFlow {
         self.report = report
         self.onDatagram = onDatagram
         self.queue = queue
+        self.isDNS = address.port == 53
         connection.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
             switch state {
             case .ready:
                 if let kind = Endpoints.kind(of: self.connection.currentPath) { self.kind = kind }
-            case .failed:
+            case .failed(let error):
+                TunnelLog.detail("udp failed \(self.label): \(error)")
                 self.cancel()
             default:
                 break
@@ -545,10 +581,28 @@ private final class UDPFlow {
         connection.receiveMessage { [weak self] data, _, _, error in
             guard let self, !self.cancelled else { return }
             if let data, !data.isEmpty {
+                Diagnostics.udpReceived += 1
+                let bytes = [UInt8](data)
+                if self.isDNS, let answer = DNSResponseParser.parse(bytes) {
+                    hostNames.record(answer)
+                }
                 self.report(self.label, self.kind, data.count, 0)
-                self.onDatagram([UInt8](data))
+                self.onDatagram(bytes)
             }
             if error == nil { self.receive() }
         }
+    }
+}
+
+/// Counters for the diagnostic log. Only touched on the proxy queue.
+private enum Diagnostics {
+    static var tcpReady = 0
+    static var tcpFailed = 0
+    static var tcpTimedOut = 0
+    static var udpSent = 0
+    static var udpReceived = 0
+
+    static var text: String {
+        "tcp ready \(tcpReady) failed \(tcpFailed) timeout \(tcpTimedOut), udp out \(udpSent) in \(udpReceived)"
     }
 }

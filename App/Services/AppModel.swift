@@ -37,8 +37,14 @@ final class AppModel {
     private(set) var billingDay: Int
     private(set) var report: UsageReport?
     private(set) var mappings: [String: String] = [:]
+    private(set) var mappingDates: [String: Date] = [:]
+    /// A reload the user started (period change, assignment…) is running.
+    private(set) var isLoading = false
+    var showRatingPrompt = false
+    var showOnboarding = !UserDefaults.standard.bool(forKey: "hasSeenOnboarding")
     private(set) var loadError: String?
     private(set) var autoResume: Bool
+    private(set) var retention: RetentionPeriod
     var filter: NetworkFilter = .all
 
     @ObservationIgnored private let settings = AppGroup.settings
@@ -48,6 +54,7 @@ final class AppModel {
         monthMode = settings.monthMode
         billingDay = settings.billingDay
         autoResume = settings.autoResumeAfterOtherVPN
+        retention = settings.retention
     }
 
     // MARK: Period
@@ -93,23 +100,34 @@ final class AppModel {
         }
     }
 
+    func setRetention(_ period: RetentionPeriod) {
+        retention = period
+        settings.retention = period
+        settings.lastPrune = nil // apply right away
+        reload()
+    }
+
     // MARK: Data
 
     /// Reloads the report. With `flush`, the tunnel writes its buffered counts first.
-    func reload(flush: Bool = false) {
+    /// `quiet` reloads (the periodic refresh) don't show a loading indicator.
+    func reload(flush: Bool = false, quiet: Bool = false) {
         reloadTask?.cancel()
         let period = self.period
+        if !quiet { isLoading = true }
         reloadTask = Task { [weak self] in
             guard let self else { return }
+            defer { if !Task.isCancelled { self.isLoading = false } }
             if flush { await self.vpn.flush() }
             let result = await Task.detached(priority: .userInitiated) {
                 Self.buildReport(period: period)
             }.value
             guard !Task.isCancelled else { return }
             switch result {
-            case .success(let (report, mappings)):
+            case .success(let (report, details)):
                 self.report = report
-                self.mappings = mappings
+                self.mappings = Dictionary(details.map { ($0.domain, $0.target) }, uniquingKeysWith: { a, _ in a })
+                self.mappingDates = Dictionary(details.map { ($0.domain, $0.created) }, uniquingKeysWith: { a, _ in a })
                 self.loadError = nil
             case .failure(let error):
                 self.loadError = String(describing: error)
@@ -117,23 +135,39 @@ final class AppModel {
         }
     }
 
-    private nonisolated static func buildReport(period: UsagePeriod) -> Result<(UsageReport, [String: String]), Error> {
+    private nonisolated static func buildReport(period: UsagePeriod) -> Result<(UsageReport, [DomainMapping]), Error> {
         guard let store = SharedStore.open() else {
             return .failure(NSError(domain: "DataTracker", code: 1,
                                     userInfo: [NSLocalizedDescriptionKey: "The usage database could not be opened."]))
         }
         DeviceSampler.sample(into: store)
+        pruneIfNeeded(store)
         do {
-            let mappings = try store.mappings()
+            let details = try store.mappingDetails()
+            let mappings = Dictionary(details.map { ($0.domain, $0.target) }, uniquingKeysWith: { a, _ in a })
             let interfaceRows = try store.interfaceUsage(fromHour: period.startHour, toHour: period.endHour)
             let domainRows = try store.domainUsage(fromHour: period.startHour, toHour: period.endHour)
             let sessions = try store.sessions(overlapping: period.start, period.end)
             let builder = UsageReportBuilder(resolver: AppResolver(customMappings: mappings))
             let report = builder.build(period: period, now: Date(), interfaceRows: interfaceRows,
                                        domainRows: domainRows, sessions: sessions)
-            return .success((report, mappings))
+            return .success((report, details))
         } catch {
             return .failure(error)
+        }
+    }
+
+    /// Deletes history older than the chosen retention, at most every few hours.
+    nonisolated static func pruneIfNeeded(_ store: UsageStore) {
+        let settings = AppGroup.settings
+        if let last = settings.lastPrune, Date().timeIntervalSince(last) < 6 * 3600 { return }
+        settings.lastPrune = Date()
+        guard let cutoff = settings.retention.cutoff(now: Date()) else { return }
+        do {
+            try store.deleteHistory(before: cutoff)
+            store.compact()
+        } catch {
+            NSLog("DataTracker: pruning failed: \(error)")
         }
     }
 
@@ -162,4 +196,19 @@ final class AppModel {
     }
 
     var databaseSize: Int64 { SharedStore.open()?.fileSize() ?? 0 }
+
+    // MARK: Onboarding & rating
+
+    func finishOnboarding() {
+        UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
+        showOnboarding = false
+    }
+
+    /// Called after the user has looked at an app's usage for the first time (the main feature).
+    func didUseMainFeature() {
+        let key = "hasShownRatingPrompt"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        showRatingPrompt = true
+    }
 }

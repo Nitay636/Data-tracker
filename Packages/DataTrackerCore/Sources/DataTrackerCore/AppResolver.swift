@@ -95,18 +95,15 @@ public struct AppResolver: Sendable {
             }
             return EntryInfo(name: appID, symbol: AppCategory.other.symbol, colorHex: AppCategory.other.colorHex)
         case .custom(let name):
-            return EntryInfo(name: name, symbol: "app.badge.fill", colorHex: "0D74CE", subtitle: "Your app")
+            return EntryInfo(name: name, symbol: "app.badge.fill", colorHex: "0D74CE")
         case .domain(let domain):
-            return EntryInfo(name: domain, symbol: "globe", colorHex: AppCategory.other.colorHex, subtitle: "Not assigned to an app")
+            return EntryInfo(name: domain, symbol: "globe", colorHex: AppCategory.other.colorHex, subtitle: "Unassigned")
         case .unidentified:
-            return EntryInfo(name: "Unidentified (IP only)", symbol: "questionmark.circle.fill", colorHex: "8B8D98",
-                             subtitle: "Connections without a host name")
+            return EntryInfo(name: "Unidentified", symbol: "questionmark.circle.fill", colorHex: "8B8D98")
         case .hotspot:
-            return EntryInfo(name: "Personal Hotspot", symbol: "personalhotspot", colorHex: "30A46C",
-                             subtitle: "Devices connected to this iPhone")
+            return EntryInfo(name: "Personal Hotspot", symbol: "personalhotspot", colorHex: "30A46C")
         case .untracked:
-            return EntryInfo(name: "Not tracked", symbol: "eye.slash.fill", colorHex: "B4B4B4",
-                             subtitle: "While per-app tracking was off")
+            return EntryInfo(name: "Not tracked", symbol: "eye.slash.fill", colorHex: "B4B4B4")
         }
     }
 }
