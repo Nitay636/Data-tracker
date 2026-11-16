@@ -143,8 +143,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         ]
         settings.ipv6Settings = ipv6
 
-        // DNS is deliberately not overridden: apps keep the network's own DNS servers, and the proxy
-        // learns host names from DNS answers and TLS server names instead.
+        // Fixed public resolvers so name lookups always have a working path through the tunnel.
+        let dns = NEDNSSettings(servers: ["1.1.1.1", "8.8.8.8", "2606:4700:4700::1111"])
+        dns.matchDomains = [""]
+        settings.dnsSettings = dns
+
         return settings
     }
 }

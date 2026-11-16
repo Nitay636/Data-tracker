@@ -115,12 +115,14 @@ public enum TunnelConfiguration {
     public static let tunnelAddress = "198.18.0.1"
     public static let tunnelSubnetMask = "255.255.0.0"
     public static let tunnelIPv6Address = "fd64:7472:6b00::1"
-    public static let mtu = 8500
+    public static let mtu = 1500
 
     public static func yaml(socksPort: UInt16) -> String {
         """
         tunnel:
           mtu: \(mtu)
+          ipv4: \(tunnelAddress)
+          ipv6: '\(tunnelIPv6Address)'
         socks5:
           port: \(socksPort)
           address: 127.0.0.1
