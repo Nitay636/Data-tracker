@@ -7,6 +7,10 @@
 DEVELOPMENT_TEAM =
 BUNDLE_ID_PREFIX = com.example
 
+// Where "Contact the developer" in Settings sends messages. Set it in Config/Local.xcconfig
+// (the install script asks for it) so it isn't committed.
+DEVELOPER_CONTACT_EMAIL =
+
 // Shared container used by the app, the VPN extension and the widget.
 APP_GROUP_ID = group.$(BUNDLE_ID_PREFIX).datatracker
 

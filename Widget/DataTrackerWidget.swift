@@ -88,7 +88,7 @@ struct DataTrackerWidgetView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Top apps").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 if entry.topApps.isEmpty {
-                    Text(entry.trackingCoverage > 0 ? "No app usage yet" : "Turn on per-app tracking in the app")
+                    Text(entry.trackingCoverage > 0 ? "No usage yet" : "Tracking off")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 ForEach(entry.topApps) { app in

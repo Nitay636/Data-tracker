@@ -7,6 +7,7 @@ struct EntryDetailView: View {
     @Environment(AppModel.self) private var model
     let id: EntryID
     @State private var assigningDomain: AssignTarget?
+    @AppStorage("order.domains") private var order = ListOrder()
 
     var body: some View {
         let info = AppResolver.info(for: id)
@@ -43,6 +44,9 @@ struct EntryDetailView: View {
         }
         .navigationTitle(info.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { LoadingToolbar(isLoading: model.isLoading) }
+        // Looking at an app's usage is the main feature; ask for a rating once, afterwards.
+        .onDisappear { model.didUseMainFeature() }
         .sheet(item: $assigningDomain) { target in
             AssignDomainView(domain: target.domain)
         }
@@ -51,39 +55,19 @@ struct EntryDetailView: View {
     private func shareText(entry: UsageEntry?, report: UsageReport) -> String? {
         guard let entry, report.totals.total > 0 else { return nil }
         let percent = Double(entry.bytes.total) / Double(report.totals.total) * 100
-        return percent < 0.1 ? "Less than 0.1% of all data" : String(format: "%.1f%% of all data", percent)
+        return percent < 0.1 ? "<0.1% of total" : String(format: "%.1f%% of total", percent)
     }
 
     @ViewBuilder
     private var explanation: some View {
-        switch id {
-        case .app(let appID) where appID == AppCatalog.systemID:
-            Section {
-                Text("Includes Apple services (updates, iCloud sync, push notifications, Siri, Maps) and “Traffic outside the VPN”: data iOS sends around every VPN, measured as the difference between the network totals and what the tracking VPN saw.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-        case .hotspot:
-            Section {
-                Text("Data used by other devices connected to this iPhone's Personal Hotspot. It's part of your cellular usage.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-        case .untracked:
-            Section {
-                Text("Data used while per-app tracking was off or paused (for example while another VPN was on). Totals are still accurate; only the split by app is unknown.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-        case .domain:
+        if case .domain(let domain) = id {
             Section {
                 Button {
-                    if case .domain(let domain) = id { assigningDomain = AssignTarget(domain: domain) }
+                    assigningDomain = AssignTarget(domain: domain)
                 } label: {
                     Label("Assign to an app…", systemImage: "arrow.triangle.merge")
                 }
-            } footer: {
-                Text("This domain isn't in the built-in list. Assign it to an app to group its usage there.")
             }
-        default:
-            EmptyView()
         }
     }
 
@@ -91,7 +75,8 @@ struct EntryDetailView: View {
     private func domainsSection(_ domains: [DomainBreakdown]) -> some View {
         if !domains.isEmpty, id != .hotspot, id != .untracked {
             Section {
-                ForEach(domains) { item in
+                ListOrderRow(order: $order)
+                ForEach(order.sorted(domains, amount: { $0.bytes.total }, date: { $0.lastUsed })) { item in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(item.domain)
@@ -126,8 +111,6 @@ struct EntryDetailView: View {
                 }
             } header: {
                 Text("Domains")
-            } footer: {
-                Text("Long-press or swipe a domain to assign it to a different app.")
             }
         }
     }
@@ -152,6 +135,10 @@ struct AssignDomainView: View {
     let domain: String
     @State private var search = ""
     @State private var newName = ""
+    @FocusState private var nameFocused: Bool
+    @FocusState private var searchFocused: Bool
+    @State private var keyboardUp = false
+    @AppStorage("order.assignApps") private var order = ListOrder()
 
     var body: some View {
         NavigationStack {
@@ -159,6 +146,7 @@ struct AssignDomainView: View {
                 Section {
                     HStack {
                         TextField("New app name", text: $newName)
+                            .focused($nameFocused)
                             .textInputAutocapitalization(.words)
                             .submitLabel(.done)
                             .onSubmit(createNew)
@@ -166,9 +154,7 @@ struct AssignDomainView: View {
                             .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                 } header: {
-                    Text("Create an app")
-                } footer: {
-                    Text("Usage from \(domain) will be grouped under this name.")
+                    Text("New app")
                 }
 
                 let custom = model.customAppNames.filter { search.isEmpty || $0.localizedCaseInsensitiveContains(search) }
@@ -181,6 +167,7 @@ struct AssignDomainView: View {
                 }
 
                 Section("Built-in apps") {
+                    ListOrderRow(order: $order)
                     ForEach(catalogMatches) { app in
                         choiceRow(id: .app(app.id))
                     }
@@ -196,6 +183,15 @@ struct AssignDomainView: View {
                 }
             }
             .searchable(text: $search, prompt: "Search apps")
+            .searchFocused($searchFocused)
+            .onChange(of: nameFocused || searchFocused) { _, focused in keyboardUp = focused }
+            .onChange(of: keyboardUp) { _, up in
+                if !up {
+                    nameFocused = false
+                    searchFocused = false
+                }
+            }
+            .keyboardFirstSwipe($keyboardUp)
             .navigationTitle(domain)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -207,9 +203,13 @@ struct AssignDomainView: View {
     }
 
     private var catalogMatches: [AppDefinition] {
-        AppCatalog.all
+        let matching = AppCatalog.all
             .filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        // Usage and last use in the current period; apps without usage keep alphabetical order.
+        return order.sorted(matching,
+                            amount: { model.report?.entry(for: .app($0.id))?.bytes.total ?? 0 },
+                            date: { model.report?.entry(for: .app($0.id))?.lastUsed })
     }
 
     private func choiceRow(id: EntryID) -> some View {

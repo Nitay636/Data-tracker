@@ -15,6 +15,9 @@ public struct SharedSettings: @unchecked Sendable {
         static let wantsTracking = "wantsTracking"
         static let lastPauseDetected = "lastPauseDetected"
         static let lastAutoResume = "lastAutoResume"
+        static let retention = "retention"
+        static let lastPrune = "lastPrune"
+        static let lastTunnelError = "lastTunnelError"
     }
 
     public var monthMode: MonthMode {
@@ -48,8 +51,56 @@ public struct SharedSettings: @unchecked Sendable {
         nonmutating set { defaults.set(newValue, forKey: Key.lastAutoResume) }
     }
 
+    public var retention: RetentionPeriod {
+        get { defaults.string(forKey: Key.retention).flatMap(RetentionPeriod.init(rawValue:)) ?? .forever }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: Key.retention) }
+    }
+
+    /// Why the tracking VPN last failed, written by the tunnel extension.
+    public var lastTunnelError: String? {
+        get { defaults.string(forKey: Key.lastTunnelError) }
+        nonmutating set { defaults.set(newValue, forKey: Key.lastTunnelError) }
+    }
+
+    public var lastPrune: Date? {
+        get { defaults.object(forKey: Key.lastPrune) as? Date }
+        nonmutating set { defaults.set(newValue, forKey: Key.lastPrune) }
+    }
+
     public var periodCalculator: PeriodCalculator {
         PeriodCalculator(calendar: .current, monthMode: monthMode, billingDay: billingDay)
+    }
+}
+
+/// How long usage history is kept on the phone.
+public enum RetentionPeriod: String, CaseIterable, Identifiable, Sendable {
+    case oneMonth, threeMonths, sixMonths, oneYear, twoYears, forever
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .oneMonth: return "1 month"
+        case .threeMonths: return "3 months"
+        case .sixMonths: return "6 months"
+        case .oneYear: return "1 year"
+        case .twoYears: return "2 years"
+        case .forever: return "Forever"
+        }
+    }
+
+    /// Oldest date to keep, or `nil` to keep everything.
+    public func cutoff(now: Date, calendar: Calendar = .current) -> Date? {
+        let months: Int
+        switch self {
+        case .oneMonth: months = 1
+        case .threeMonths: months = 3
+        case .sixMonths: months = 6
+        case .oneYear: months = 12
+        case .twoYears: months = 24
+        case .forever: return nil
+        }
+        return calendar.date(byAdding: .month, value: -months, to: calendar.startOfDay(for: now))
     }
 }
 
@@ -63,28 +114,19 @@ public enum TunnelMessage {
 public enum TunnelConfiguration {
     public static let tunnelAddress = "198.18.0.1"
     public static let tunnelSubnetMask = "255.255.0.0"
-    /// DNS server answered by hev-socks5-tunnel itself, so connections carry host names.
-    public static let dnsAddress = "198.18.0.2"
-    /// Fake addresses handed out by the mapped DNS; they are translated back to host names.
-    public static let mappedNetwork = "198.19.0.0"
-    public static let mappedNetmask = "255.255.0.0"
     public static let tunnelIPv6Address = "fd64:7472:6b00::1"
-    public static let mtu = 8500
+    public static let mtu = 1500
 
     public static func yaml(socksPort: UInt16) -> String {
         """
         tunnel:
           mtu: \(mtu)
+          ipv4: \(tunnelAddress)
+          ipv6: '\(tunnelIPv6Address)'
         socks5:
           port: \(socksPort)
           address: 127.0.0.1
           udp: 'tcp'
-        mapdns:
-          address: \(dnsAddress)
-          port: 53
-          network: \(mappedNetwork)
-          netmask: \(mappedNetmask)
-          cache-size: 10000
         misc:
           task-stack-size: 24576
           tcp-buffer-size: 16384

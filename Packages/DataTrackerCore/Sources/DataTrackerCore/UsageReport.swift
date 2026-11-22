@@ -15,11 +15,14 @@ public struct UsageEntry: Identifiable, Hashable, Sendable {
     public var id: EntryID
     public var info: EntryInfo
     public var bytes: NetworkBytes
+    /// End of the most recent hour with usage in the period.
+    public var lastUsed: Date?
 
-    public init(id: EntryID, info: EntryInfo, bytes: NetworkBytes) {
+    public init(id: EntryID, info: EntryInfo, bytes: NetworkBytes, lastUsed: Date? = nil) {
         self.id = id
         self.info = info
         self.bytes = bytes
+        self.lastUsed = lastUsed
     }
 }
 
@@ -28,13 +31,15 @@ public struct DomainBreakdown: Identifiable, Hashable, Sendable {
     public var bytes: NetworkBytes
     /// `true` for rows that are not real domains (e.g. traffic that bypassed the VPN).
     public var isSynthetic: Bool
+    /// End of the most recent hour with usage in the period.
+    public var lastUsed: Date?
     public var id: String { domain }
 }
 
 /// Everything shown for one period: totals, chart buckets, and the ranked app list.
 public struct UsageReport: Sendable {
     /// Domain label used for system traffic that iOS sends outside the VPN.
-    public static let outsideVPNLabel = "Traffic outside the VPN"
+    public static let outsideVPNLabel = "Outside the VPN"
 
     public let period: UsagePeriod
     public let generatedAt: Date
@@ -50,6 +55,7 @@ public struct UsageReport: Sendable {
     let bucketStarts: [Date]
     let entryHourly: [EntryID: [Int64: NetworkBytes]]
     let entryDomains: [EntryID: [String: NetworkBytes]]
+    let domainLastHour: [String: Int64]
 
     public func entry(for id: EntryID) -> UsageEntry? {
         entries.first { $0.id == id }
@@ -60,9 +66,18 @@ public struct UsageReport: Sendable {
         UsageReportBuilder.bucketize(entryHourly[id] ?? [:], starts: bucketStarts, periodEnd: period.end)
     }
 
+    /// Usage of one domain in this period, whichever entry it belongs to.
+    public func usage(ofDomain domain: String) -> (bytes: NetworkBytes, lastUsed: Date?) {
+        let bytes = entryDomains.values.compactMap { $0[domain] }.reduce(NetworkBytes.zero, +)
+        return (bytes, domainLastHour[domain].map { Hour.start(of: $0 + 1) })
+    }
+
     public func domains(for id: EntryID) -> [DomainBreakdown] {
         (entryDomains[id] ?? [:])
-            .map { DomainBreakdown(domain: $0.key, bytes: $0.value, isSynthetic: $0.key == Self.outsideVPNLabel) }
+            .map { item in
+                DomainBreakdown(domain: item.key, bytes: item.value, isSynthetic: item.key == Self.outsideVPNLabel,
+                                lastUsed: domainLastHour[item.key].map { Hour.start(of: $0 + 1) })
+            }
             .filter { !$0.bytes.isZero }
             .sorted { $0.bytes.total > $1.bytes.total }
     }
@@ -100,7 +115,9 @@ public struct UsageReportBuilder: Sendable {
         var entryHourly: [EntryID: [Int64: NetworkBytes]] = [:]
         var entryDomains: [EntryID: [String: NetworkBytes]] = [:]
         var resolved: [String: EntryID] = [:]
+        var domainLastHour: [String: Int64] = [:]
         for row in domainRows where row.hour >= startHour && row.hour < endHour {
+            if !row.bytes.isZero { domainLastHour[row.domain] = max(domainLastHour[row.domain] ?? row.hour, row.hour) }
             let id: EntryID
             if let cached = resolved[row.domain] {
                 id = cached
@@ -132,6 +149,7 @@ public struct UsageReportBuilder: Sendable {
             if !tracked.isZero {
                 entryHourly[systemID, default: [:]][hour, default: .zero] += tracked
                 entryDomains[systemID, default: [:]][UsageReport.outsideVPNLabel, default: .zero] += tracked
+                domainLastHour[UsageReport.outsideVPNLabel] = max(domainLastHour[UsageReport.outsideVPNLabel] ?? hour, hour)
             }
             if !untracked.isZero {
                 entryHourly[.untracked, default: [:]][hour, default: .zero] += untracked
@@ -150,7 +168,9 @@ public struct UsageReportBuilder: Sendable {
         let entries = entryHourly.compactMap { id, hours -> UsageEntry? in
             let sum = hours.values.reduce(NetworkBytes.zero, +)
             guard !sum.isZero else { return nil }
-            return UsageEntry(id: id, info: AppResolver.info(for: id), bytes: sum)
+            let lastHour = hours.filter { !$0.value.isZero }.keys.max()
+            return UsageEntry(id: id, info: AppResolver.info(for: id), bytes: sum,
+                              lastUsed: lastHour.map { Hour.start(of: $0 + 1) })
         }
         .sorted { lhs, rhs in
             if lhs.bytes.total != rhs.bytes.total { return lhs.bytes.total > rhs.bytes.total }
@@ -160,7 +180,8 @@ public struct UsageReportBuilder: Sendable {
         return UsageReport(period: period, generatedAt: now, totals: totals, hotspot: hotspot,
                            buckets: buckets, entries: entries,
                            trackedShare: trackedShare(period: period, sessions: sessions, now: now),
-                           bucketStarts: starts, entryHourly: entryHourly, entryDomains: entryDomains)
+                           bucketStarts: starts, entryHourly: entryHourly, entryDomains: entryDomains,
+                           domainLastHour: domainLastHour)
     }
 
     // MARK: Helpers

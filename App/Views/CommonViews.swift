@@ -15,6 +15,7 @@ struct PeriodHeader: View {
                 }
             }
             .pickerStyle(.segmented)
+            .sensoryFeedback(.selection, trigger: model.periodKind)
 
             HStack {
                 Button {
@@ -41,6 +42,7 @@ struct PeriodHeader: View {
                 .accessibilityLabel("Next")
             }
             .buttonStyle(.borderless)
+            .sensoryFeedback(.selection, trigger: model.offset)
         }
     }
 }
@@ -133,9 +135,7 @@ struct UsageChart: View {
             }
             .font(.caption.monospacedDigit())
         } else {
-            Text("Tap a bar for details")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text(" ").font(.caption) // keeps the chart from jumping when a bar is selected
         }
     }
 }
@@ -160,7 +160,7 @@ struct NetworkTotalsView: View {
             }
             if let hotspot, !hotspot.isZero {
                 Label {
-                    Text("Personal Hotspot: \(hotspot.total.bytesText) of cellular")
+                    Text("Hotspot \(hotspot.total.bytesText)")
                 } icon: {
                     Image(systemName: "personalhotspot")
                 }
@@ -259,28 +259,24 @@ struct TrackingStatusBanner: View {
         case .on, .connecting, .disconnecting:
             EmptyView()
         case .notInstalled, .off:
-            banner(symbol: "eye.slash",
-                   title: "Per-app tracking is off",
-                   message: "Wi-Fi and cellular totals are still measured. Turn on the on-device VPN to see which apps use data.",
-                   button: "Turn On")
+            banner(symbol: "eye.slash", title: "Per-app tracking is off", button: "Turn On")
         case .paused:
             banner(symbol: "pause.circle",
-                   title: vpn.otherVPNActive ? "Paused while another VPN is on" : "Per-app tracking is paused",
-                   message: model.autoResume
-                       ? "It turns back on automatically after the other VPN disconnects."
-                       : "Auto-resume is off in Settings.",
-                   button: "Resume Now")
+                   title: vpn.otherVPNActive ? "Paused: another VPN is on" : "Per-app tracking paused",
+                   button: "Resume")
         }
     }
 
-    private func banner(symbol: String, title: String, message: String, button: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+    private func banner(symbol: String, title: String, button: String) -> some View {
+        HStack(spacing: 12) {
             Image(systemName: symbol)
-                .font(.title2)
+                .font(.title3)
                 .foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title).font(.subheadline.weight(.semibold))
-                Text(message).font(.footnote).foregroundStyle(.secondary)
+            Text(title).font(.subheadline.weight(.semibold))
+            Spacer()
+            if model.vpn.isBusy || model.vpn.phase == .connecting {
+                ProgressView()
+            } else {
                 Button(button) {
                     Task {
                         await model.vpn.turnOn()
@@ -289,7 +285,6 @@ struct TrackingStatusBanner: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(model.vpn.isBusy)
             }
         }
         .padding(.vertical, 4)

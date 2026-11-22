@@ -39,10 +39,18 @@ fi
 [[ "$TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || fail "\"$TEAM_ID\" doesn't look like a Team ID (10 letters/digits)."
 
 PREFIX=""
-[[ -f "$LOCAL_CONFIG" ]] && PREFIX=$(sed -n 's/^BUNDLE_ID_PREFIX *= *//p' "$LOCAL_CONFIG" | tr -d ' ')
+CONTACT=""
+if [[ -f "$LOCAL_CONFIG" ]]; then
+    PREFIX=$(sed -n 's/^BUNDLE_ID_PREFIX *= *//p' "$LOCAL_CONFIG" | tr -d ' ')
+    CONTACT=$(sed -n 's/^DEVELOPER_CONTACT_EMAIL *= *//p' "$LOCAL_CONFIG" | tr -d ' ')
+fi
+if [[ -z "$CONTACT" ]]; then
+    read -r -p "Email where users' messages from Settings should go (Enter to skip): " CONTACT
+fi
 # Bundle IDs must be unique across all Apple developers, so derive one from the team.
 [[ -n "$PREFIX" ]] || PREFIX="com.t$(echo "$TEAM_ID" | tr '[:upper:]' '[:lower:]')"
-printf 'DEVELOPMENT_TEAM = %s\nBUNDLE_ID_PREFIX = %s\n' "$TEAM_ID" "$PREFIX" > "$LOCAL_CONFIG"
+printf 'DEVELOPMENT_TEAM = %s\nBUNDLE_ID_PREFIX = %s\nDEVELOPER_CONTACT_EMAIL = %s\n' \
+    "$TEAM_ID" "$PREFIX" "$CONTACT" > "$LOCAL_CONFIG"
 echo "Team $TEAM_ID, bundle ID $PREFIX.datatracker (saved in $LOCAL_CONFIG)"
 
 # 3. Project
@@ -85,8 +93,12 @@ build_for() {
         -allowProvisioningUpdates \
         -allowProvisioningDeviceRegistration \
         -skipPackagePluginValidation \
+        CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
         > build.log 2>&1
 }
+
+# Build number goes up with every commit, so each install shows a new version in Settings.
+BUILD_NUMBER=$(git rev-list --count HEAD 2>/dev/null || date +%Y%m%d%H%M)
 
 APP="$BUILD_DIR/Build/Products/Release-iphoneos/DataTracker.app"
 INSTALLED=0
